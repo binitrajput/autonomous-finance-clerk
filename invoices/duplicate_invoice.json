@@ -1,0 +1,16 @@
+{
+    "invoice_number": "INV-2024-0035",
+    "vendor_name": "Globex International",
+    "vendor_tax_id": "TAX-GX-2024-002",
+    "invoice_date": "2024-09-15",
+    "due_date": "2024-10-30",
+    "currency": "USD",
+    "subtotal": 3200.00,
+    "tax": 0.00,
+    "total_amount": 3200.00,
+    "po_number": "PO-2024-002",
+    "line_items": [
+        {"description": "Cloud Infrastructure - September", "quantity": 1, "unit_price": 3200.00, "amount": 3200.00}
+    ],
+    "notes": "This is a duplicate submission of an already-processed invoice."
+}

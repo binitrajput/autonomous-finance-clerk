@@ -1,0 +1,17 @@
+{
+    "invoice_number": "INV-2024-0042",
+    "vendor_name": "Acme Corp",
+    "vendor_tax_id": "TAX-AC-2024-001",
+    "invoice_date": "2024-10-25",
+    "due_date": "2024-11-24",
+    "currency": "USD",
+    "subtotal": 4000.00,
+    "tax": 250.00,
+    "total_amount": 4250.00,
+    "po_number": "PO-2024-001",
+    "line_items": [
+        {"description": "Industrial Widgets (500 units)", "quantity": 500, "unit_price": 7.00, "amount": 3500.00},
+        {"description": "Shipping & Handling", "quantity": 1, "unit_price": 500.00, "amount": 500.00}
+    ],
+    "notes": "Net 30 payment terms. Thank you for your business."
+}

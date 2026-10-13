@@ -1,0 +1,16 @@
+{
+    "invoice_number": "INV-2024-0099",
+    "vendor_name": "Acme Corporation",
+    "vendor_tax_id": "TAX-AC-2024-001",
+    "invoice_date": "2024-10-13",
+    "due_date": "2024-11-12",
+    "currency": "USD",
+    "subtotal": 680.00,
+    "tax": 47.60,
+    "total_amount": 727.60,
+    "po_number": "PO-2024-004",
+    "line_items": [
+        {"description": "Emergency replacement parts", "quantity": 20, "unit_price": 34.00, "amount": 680.00}
+    ],
+    "notes": "Urgent order - vendor name has corporation suffix rather than corp."
+}

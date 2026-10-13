@@ -1,0 +1,9 @@
+{
+    "invoice_number": "INV-2024-BROKEN",
+    "vendor_name": "Unknown Supplier",
+    "invoice_date": "2024-10-05",
+    "due_date": null,
+    "currency": "USD",
+    "line_items": [],
+    "notes": "This invoice is intentionally malformed for error handling tests. Missing total_amount field."
+}

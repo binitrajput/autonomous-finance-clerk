@@ -1,0 +1,16 @@
+{
+    "invoice_number": "INV-2024-0078",
+    "vendor_name": "Globex International",
+    "vendor_tax_id": "TAX-GX-2024-002",
+    "invoice_date": "2024-10-12",
+    "due_date": "2024-11-26",
+    "currency": "USD",
+    "subtotal": 750.00,
+    "tax": 52.50,
+    "total_amount": 802.50,
+    "po_number": "PO-2024-002",
+    "line_items": [
+        {"description": "Cloud Compute Hours - October", "quantity": 150, "unit_price": 5.00, "amount": 750.00}
+    ],
+    "notes": "Monthly cloud usage invoice."
+}
