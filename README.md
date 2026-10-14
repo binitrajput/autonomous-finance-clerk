@@ -1,11 +1,11 @@
 # 🤖 Autonomous AI Task Worker — Finance & Operations Clerk
 
-[![Tests](https://img.shields.io/badge/Tests-8%2F8%20Passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-9%2F9%20Passing-brightgreen.svg)]()
 [![Architecture](https://img.shields.io/badge/Architecture-ReAct%20Loop-blue.svg)]()
-[![Model-Agnostic](https://img.shields.io/badge/LLM-Gemini%20%7C%20OpenAI%20%7C%20Claude-purple.svg)]()
+[![Model-Agnostic](https://img.shields.io/badge/LLM-Groq%20%7C%20Gemini%20%7C%20OpenAI%20%7C%20Claude-purple.svg)]()
 [![Verification](https://img.shields.io/badge/Audit-Independent%20DB%20Verification-emerald.svg)]()
 
-> An autonomous AI worker prototype that accepts natural language enterprise tasks, decomposes them into tool-driven action plans across simulated file systems and an internal ERP database, recovers from anomalous states, enforces human-in-the-loop safety gates, and independently verifies outcome completion.
+> A local autonomous finance workflow prototype. It uses an LLM or deterministic fallback to work with sample invoice files and a seeded SQLite company database, with approval gates and audit evidence for its demo workflows. It does not connect to accounting services or move money.
 
 ---
 
@@ -18,7 +18,7 @@ Accounts payable and finance teams spend countless hours manually reading incomi
 This project implements an **Autonomous AI Task Worker** capable of taking end-goal natural language directives such as:
 > *"Find the latest invoice from Acme Corp, extract the amount and due date, enter it into our internal system, and tell me once it is done."*
 
-The system plans and executes the entire workflow without hand-held micro-prompts, verifies the database state, and produces verifiable audit evidence.
+The agent selects tools to carry out the workflow, checks resulting ledger records, and produces an audit report. Sample invoices and a local SQLite database make the workflows reproducible.
 
 ---
 
@@ -50,13 +50,12 @@ The agent operates on an augmented **ReAct (Reason + Act + Observe)** execution 
 
 | Evaluation Criterion | Implementation in System |
 |:---|:---|
-| **Autonomy** | Decomposes high-level prompts into 5–8 atomic actions without step-by-step instructions. |
-| **Execution** | Performs real file I/O, queries and inserts into a real SQLite database, rather than mocking outputs. |
-| **Reliability & Self-Healing** | Recovers from fuzzy vendor names (e.g. *"Acme Corporation"* vs *"Acme Corp"*), catches malformed payloads, and aborts duplicates. |
-| **Verification** | Executes an independent SQL assertion (`verify_ledger_entry`) confirming the physical database record exists and amounts match before completing. |
-| **Safety & HITL** | High-value entries require an invoice-and-amount-matched approval grant; the Streamlit preapproval control defaults off. |
-| **Generalization** | The core ReAct loop seamlessly answers analytical database questions (e.g. *"How many pending invoices do we have?"*) using the same tools. |
-| **Engineering Quality** | Clean separation of concerns (`agent/`, `tools/`, `company_system/`, `tests/`) and typed interfaces. |
+| **Tool-driven workflow** | Uses LiteLLM function calling to search and read sample invoices, query company data, check duplicates, and create ledger entries. |
+| **Offline fallback** | Runs a deterministic heuristic path when LiteLLM or a matching provider key is unavailable; the fallback supports common demo workflows. |
+| **Input safeguards** | Rejects malformed invoices and stops duplicate entries before writing to the ledger. |
+| **Approval gate** | Requests approval for invoices above the configured threshold before creating a ledger entry. |
+| **Outcome checks** | Independently checks inserted ledger records and treats successful read-only invoice searches and database queries as verifiable tasks. Safe halts remain incomplete outcomes. |
+| **Audit trail** | Keeps tool-step results and produces a Markdown execution report. |
 
 ---
 
@@ -122,9 +121,14 @@ pip install -r requirements.txt
 ### 2. Configure Environment (Optional)
 ```bash
 cp .env.example .env
-# Add your GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY
-# If no key is provided, the agent runs in offline autonomous mode!
+# Set MODEL_NAME and the matching provider key in .env.
+# Example for Groq-hosted GPT-OSS:
+# MODEL_NAME=openai/gpt-oss-120b
+# GROQ_API_KEY=your_groq_api_key
+# Without a supported key, the agent uses its deterministic fallback.
 ```
+
+The selected model and key must belong to the same provider. Supported key variables are `GROQ_API_KEY`, `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `OPENAI_API_KEY`, and `ANTHROPIC_API_KEY`. Never commit `.env` or paste a key into an issue or terminal transcript.
 
 ---
 
@@ -137,6 +141,10 @@ python main.py
 Or pass a prompt directly:
 ```bash
 python main.py --task "Process the latest invoice from Acme Corp and enter it into our system."
+```
+List the available sample invoices:
+```bash
+python main.py --task "List the available invoices"
 ```
 
 ### Option B: Streamlit Web Dashboard
@@ -151,7 +159,7 @@ Features:
 
 ---
 
-## 🧪 Automated Test Suite (8/8 Passing)
+## 🧪 Automated Test Suite (9/9 Passing)
 
 Run the test suite:
 ```bash
@@ -159,14 +167,17 @@ pytest tests/ -v
 ```
 
 ### Test Coverage Breakdown:
-1. `test_1_happy_path_with_approval`: Full autonomous cycle with human approval on $4,250 invoice.
-2. `test_2_auto_approval_under_threshold`: Auto-approves $802.50 invoice without interrupting user.
-3. `test_3_duplicate_detection_blocked`: Successfully catches and halts duplicate invoice submission.
-4. `test_4_malformed_invoice_handled_safely`: Rejects corrupted/malformed files without polluting the database.
-5. `test_5_user_denies_approval`: Halts execution safely when user denies approval.
-6. `test_6_fuzzy_vendor_matching`: Fuzzy matches *"Acme Corporation"* to registered *"Acme Corp"*.
-7. `test_7_outcome_verification_catches_discrepancy`: Verifier catches and reports nonexistent or corrupted records.
-8. `test_8_generalization_analytical_query`: Solves analytical SQL query without altering code.
+1. `test_1_happy_path_with_approval`: Processes the $4,250 sample invoice after an approval callback and verifies the ledger record.
+2. `test_2_auto_approval_under_threshold`: Processes the $802.50 sample invoice without requesting approval.
+3. `test_3_duplicate_detection_blocked`: Stops on a duplicate and confirms the ledger is unchanged.
+4. `test_4_malformed_invoice_handled_safely`: Stops on a malformed invoice and confirms the ledger is unchanged.
+5. `test_5_user_denies_approval`: Stops when approval is denied and confirms no ledger record is written.
+6. `test_6_fuzzy_vendor_matching`: Matches *"Acme Corporation"* to the seeded *"Acme Corp"* vendor.
+7. `test_7_outcome_verification_catches_discrepancy`: Confirms the verifier rejects a missing ledger record.
+8. `test_8_generalization_analytical_query`: Answers a read-only ledger query.
+9. `test_9_invoice_listing_is_a_verified_read_only_task`: Lists sample invoices and verifies the search result without requiring a ledger write.
+
+Tests force deterministic mode and reset the local SQLite database to its seed state before each scenario. They do not exercise live provider/API behavior.
 
 ---
 
@@ -175,9 +186,9 @@ pytest tests/ -v
 Deploy in 1-click on [Streamlit Community Cloud](https://share.streamlit.io):
 1. Connect your GitHub repository: `binitrajput/autonomous-finance-clerk`
 2. Set Main file path: `app.py`
-3. Add the provider key in **App settings → Secrets**, for example:
+3. Add the model and matching provider key in **App settings → Secrets**, for example:
    ```toml
-   MODEL_NAME = "gemini/gemini-3.8-flash"
-   GEMINI_API_KEY = "your_gemini_api_key_here"
+   MODEL_NAME = "openai/gpt-oss-120b"
+   GROQ_API_KEY = "your_groq_api_key_here"
    ```
-4. Click **Deploy**. The SQLite database is seeded demo data; use managed storage for durable production records.
+4. Click **Deploy**. The application uses seeded demo data in a local SQLite database; it is a prototype and does not provide durable production storage or connect to payment systems.

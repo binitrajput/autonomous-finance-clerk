@@ -17,7 +17,7 @@ except Exception:
     pass
 
 import config
-from agent.core import AutonomousAgent
+from agent.core import AutonomousAgent, LITELLM_AVAILABLE
 from tools.approval import set_approval_callback
 from tools.duplicate_checker import check_duplicate
 from tools.invoice_reader import read_invoice
@@ -208,6 +208,12 @@ with tab_chat:
 
             agent_model = None if model_choice == "Deterministic Engine" else model_choice
             agent = AutonomousAgent(model_name=agent_model)
+            if model_choice == "Deterministic Engine":
+                status_container.warning("Deterministic Engine is selected; this task will not use an LLM.")
+            elif not LITELLM_AVAILABLE:
+                status_container.warning("LiteLLM is not installed in this Python environment. Install the project dependencies to use the selected model; this run will use the deterministic fallback.")
+            elif not agent._api_key_for_model():
+                status_container.warning(f"No API key is configured for {agent.model_name}. This run will use the deterministic fallback.")
             try:
                 result = agent.run(task_to_run, verbose=False)
             finally:

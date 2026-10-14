@@ -239,6 +239,30 @@ class AutonomousAgent:
         steps = memory.steps if memory else []
         tools_called = [s.tool for s in steps]
 
+        # A request to list invoice files is a read-only discovery task, not a
+        # request to inspect pending ledger entries or process an invoice.
+        if "invoice" in task_lower and any(w in task_lower for w in ["list", "show", "available"]):
+            if "search_invoices" not in tools_called:
+                return {
+                    "tool_calls": [{
+                        "name": "search_invoices",
+                        "arguments": {"query": ""}
+                    }]
+                }
+            search_step = next(s for s in reversed(steps) if s.tool == "search_invoices")
+            files = search_step.result.get("files", [])
+            if not files:
+                return {"content": "No invoice files are currently available."}
+            lines = ["Available invoice files:"]
+            for invoice in files:
+                lines.append(
+                    f"- {invoice.get('invoice_number', invoice.get('file_name', 'Unknown'))}: "
+                    f"{invoice.get('vendor_name', 'Unknown vendor')}, "
+                    f"{invoice.get('invoice_date') or 'date unavailable'}, "
+                    f"{invoice.get('total_amount') if invoice.get('total_amount') is not None else 'amount unavailable'}"
+                )
+            return {"content": "\n".join(lines)}
+
         # Scenario A: Analytical Query (e.g. "How many unpaid invoices...")
         if any(w in task_lower for w in ["how many", "count", "show all", "list", "total unpaid"]):
             if "query_database" not in tools_called:

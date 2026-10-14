@@ -87,6 +87,8 @@ def test_3_duplicate_detection_blocked():
     result = agent.run("Process duplicate_invoice.json", verbose=False)
 
     assert result["status"] == "DUPLICATE_BLOCKED"
+    assert result["verification"]["passed"] is False
+    assert result["verification"]["safe_halt"] is True
 
     # Confirm ledger count has NOT changed
     conn = get_db_connection()
@@ -110,6 +112,8 @@ def test_4_malformed_invoice_handled_safely():
     result = agent.run("Process the invoice from malformed_invoice.json", verbose=False)
 
     assert result["status"] == "MALFORMED_BLOCKED"
+    assert result["verification"]["passed"] is False
+    assert result["verification"]["safe_halt"] is True
 
     # Database must remain untouched
     conn = get_db_connection()
@@ -176,3 +180,14 @@ def test_8_generalization_analytical_query():
 
     assert result["success"] is True
     assert "pending invoices" in result["final_response"].lower()
+
+
+def test_9_invoice_listing_is_a_verified_read_only_task():
+    """Scenario 9: Listing sample invoices completes without ledger writes."""
+    agent = AutonomousAgent()
+    result = agent.run("List the available invoices", verbose=False)
+
+    assert result["success"] is True
+    assert result["verification"]["invoice_search_verified"] is True
+    assert result["verification"]["invoice_count"] > 0
+    assert "INV-2024-0042" in result["final_response"]

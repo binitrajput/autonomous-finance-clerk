@@ -67,17 +67,9 @@ class OutcomeVerifier:
                 "db_record": audit["record"]
             }
 
-        # A successful read-only query is verifiable evidence of completion.
-        query_step = next((s for s in reversed(memory.steps) if s.tool == "query_database"), None)
-        if query_step and query_step.result.get("success"):
-            return {
-                "passed": True,
-                "query_verified": True,
-                "row_count": query_step.result.get("count", len(query_step.result.get("rows", []))),
-                "reason": "Read-only database query executed successfully."
-            }
-
-        # A safe halt is not a completed task; report the safety outcome separately.
+        # A safe halt takes precedence over earlier discovery steps. A workflow
+        # may search invoices successfully and then stop on a duplicate,
+        # malformed invoice, or denied approval; that is not task completion.
         aborted = next((s for s in reversed(memory.steps) if (
             (s.tool == "check_duplicate" and s.result.get("is_duplicate"))
             or (s.tool == "read_invoice" and s.result.get("is_malformed"))
@@ -88,6 +80,27 @@ class OutcomeVerifier:
                 "passed": False,
                 "safe_halt": True,
                 "reason": "Execution safely stopped; the requested ledger entry was not created."
+            }
+
+        # A successful read-only query is verifiable evidence of completion.
+        query_step = next((s for s in reversed(memory.steps) if s.tool == "query_database"), None)
+        if query_step and query_step.result.get("success"):
+            return {
+                "passed": True,
+                "query_verified": True,
+                "row_count": query_step.result.get("count", len(query_step.result.get("rows", []))),
+                "reason": "Read-only database query executed successfully."
+            }
+
+        # Listing or searching invoice files is also a read-only task with
+        # independently checkable tool evidence; it does not require a ledger write.
+        invoice_search = next((s for s in reversed(memory.steps) if s.tool == "search_invoices"), None)
+        if invoice_search and invoice_search.result.get("success"):
+            return {
+                "passed": True,
+                "invoice_search_verified": True,
+                "invoice_count": invoice_search.result.get("count", len(invoice_search.result.get("files", []))),
+                "reason": "Invoice search completed successfully."
             }
 
         return {
