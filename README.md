@@ -1,6 +1,6 @@
 # 🤖 Autonomous AI Task Worker — Finance & Operations Clerk
 
-[![Tests](https://img.shields.io/badge/Tests-14%2F14%20Passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-15%2F15%20Passing-brightgreen.svg)]()
 [![Architecture](https://img.shields.io/badge/Architecture-ReAct%20Loop-blue.svg)]()
 [![Model-Agnostic](https://img.shields.io/badge/LLM-Groq%20%7C%20Gemini%20%7C%20OpenAI%20%7C%20Claude-purple.svg)]()
 [![Verification](https://img.shields.io/badge/Audit-Independent%20DB%20Verification-emerald.svg)]()
@@ -160,7 +160,7 @@ Features:
 
 ---
 
-## 🧪 Automated Test Suite (14/14 Passing)
+## 🧪 Automated Test Suite (15/15 Passing)
 
 Run the test suite:
 ```bash
@@ -182,6 +182,7 @@ pytest tests/ -v
 12. `test_12_run_reports_when_llm_made_the_decisions`: Confirms run evidence distinguishes actual LLM decisions from fallback decisions.
 13. `test_13_invoice_reader_blocks_paths_outside_invoice_directory`: Confirms the invoice reader rejects traversal outside the invoice directory.
 14. `test_14_simultaneous_duplicate_inserts_create_one_ledger_row`: Confirms concurrent duplicate requests create only one ledger entry.
+15. `test_15_ledger_write_enforces_amount_vendor_and_purchase_order_rules`: Rejects nonpositive amounts, inactive vendors, mismatched or invalid purchase orders, and PO budget overruns before writing.
 
 Tests force deterministic mode and reset the local SQLite database to its seed state before each scenario. They do not exercise live provider/API behavior.
 

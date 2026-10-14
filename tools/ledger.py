@@ -2,6 +2,8 @@
 
 import config
 import sqlite3
+import re
+from decimal import Decimal, InvalidOperation
 from typing import Dict, Any, Optional
 from tools.database import get_db_connection
 from tools.approval import consume_approval
@@ -38,8 +40,24 @@ def insert_ledger_entry(
     Returns:
         Dict with status, ledger_entry_id, or approval error.
     """
+    # Validate values again at the write boundary; callers may bypass the
+    # invoice parser, and LLM tool arguments must never be trusted by themselves.
+    invoice_number = str(invoice_number).strip()
+    if not invoice_number:
+        return {"success": False, "error": "Invoice number cannot be empty."}
+    try:
+        amount_value = Decimal(str(amount))
+    except (InvalidOperation, TypeError, ValueError):
+        return {"success": False, "error": "Invoice amount must be a valid positive number."}
+    if not amount_value.is_finite() or amount_value <= 0:
+        return {"success": False, "error": "Invoice amount must be a valid positive number."}
+    if not isinstance(currency, str) or not re.fullmatch(r"[A-Za-z]{3}", currency.strip()):
+        return {"success": False, "error": "Currency must be a three-letter code."}
+    currency = currency.strip().upper()
+    amount = float(amount_value)
+
     # 1. Safety Threshold Check
-    if amount > config.APPROVAL_THRESHOLD and (
+    if amount_value > Decimal(str(config.APPROVAL_THRESHOLD)) and (
         not user_approved or not consume_approval(invoice_number, amount)
     ):
         return {
@@ -73,12 +91,48 @@ def insert_ledger_entry(
                 "error": f"Vendor ID {vendor_id} not found in database. Cannot insert ledger entry."
             }
 
-        if vendor["status"] == "suspended":
+        if vendor["status"] != "active":
             conn.close()
             return {
                 "success": False,
-                "error": f"Vendor '{vendor['name']}' is suspended. Invoices cannot be processed."
+                "error": f"Vendor '{vendor['name']}' is {vendor['status']}. Invoices require an active vendor."
             }
+
+        # When the invoice names a PO, enforce ownership, state, and remaining
+        # approved value while holding the same write transaction.
+        po_number = po_number.strip() if isinstance(po_number, str) else po_number
+        if po_number:
+            cursor.execute(
+                "SELECT vendor_id, approved_amount, status FROM purchase_orders WHERE po_number = ?",
+                (po_number,)
+            )
+            purchase_order = cursor.fetchone()
+            if not purchase_order:
+                conn.close()
+                return {"success": False, "error": f"Purchase order {po_number} was not found."}
+            if purchase_order["vendor_id"] != vendor_id:
+                conn.close()
+                return {"success": False, "error": f"Purchase order {po_number} belongs to a different vendor."}
+            if purchase_order["status"] != "open":
+                conn.close()
+                return {"success": False, "error": f"Purchase order {po_number} is {purchase_order['status']}, not open."}
+
+            cursor.execute(
+                """SELECT COALESCE(SUM(amount), 0) AS committed
+                   FROM ledger WHERE po_number = ? AND status != 'rejected'""",
+                (po_number,)
+            )
+            committed = Decimal(str(cursor.fetchone()["committed"]))
+            available = Decimal(str(purchase_order["approved_amount"])) - committed
+            if amount_value > available:
+                conn.close()
+                return {
+                    "success": False,
+                    "error": (
+                        f"Invoice amount ${amount_value:,.2f} exceeds the remaining "
+                        f"approved PO amount of ${max(available, Decimal('0')):,.2f}."
+                    )
+                }
 
         # Insert into ledger
         cursor.execute(

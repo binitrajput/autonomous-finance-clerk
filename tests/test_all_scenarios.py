@@ -299,3 +299,41 @@ def test_14_simultaneous_duplicate_inserts_create_one_ledger_row():
     ).fetchone()[0]
     conn.close()
     assert count == 1
+
+
+def test_15_ledger_write_enforces_amount_vendor_and_purchase_order_rules(monkeypatch):
+    """The ledger rejects invalid amounts, vendors, PO ownership, and PO overruns."""
+    monkeypatch.setattr(config, "APPROVAL_THRESHOLD", 10_000.00)
+
+    invalid_amount = insert_ledger_entry("INV-TEST-NEGATIVE", 1, -1.00)
+    assert invalid_amount["success"] is False
+    assert "positive" in invalid_amount["error"]
+
+    mismatched_po = insert_ledger_entry(
+        "INV-TEST-WRONG-PO", vendor_id=1, amount=100.00, po_number="PO-2024-002"
+    )
+    assert mismatched_po["success"] is False
+    assert "different vendor" in mismatched_po["error"]
+
+    over_budget = insert_ledger_entry(
+        "INV-TEST-PO-OVERRUN", vendor_id=2, amount=9_000.00, po_number="PO-2024-002"
+    )
+    assert over_budget["success"] is False
+    assert "remaining approved PO amount" in over_budget["error"]
+
+    conn = get_db_connection()
+    conn.execute("UPDATE vendors SET status = 'blacklisted' WHERE id = 2")
+    conn.commit()
+    conn.close()
+    inactive_vendor = insert_ledger_entry(
+        "INV-TEST-BLACKLISTED", vendor_id=2, amount=100.00, po_number="PO-2024-002"
+    )
+    assert inactive_vendor["success"] is False
+    assert "active vendor" in inactive_vendor["error"]
+
+    conn = get_db_connection()
+    count = conn.execute(
+        "SELECT COUNT(*) FROM ledger WHERE invoice_number LIKE 'INV-TEST-%'"
+    ).fetchone()[0]
+    conn.close()
+    assert count == 0
