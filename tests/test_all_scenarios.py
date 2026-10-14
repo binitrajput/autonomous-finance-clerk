@@ -11,6 +11,8 @@ Covers:
 """
 
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from types import SimpleNamespace
 import pytest
 
@@ -22,6 +24,7 @@ from agent.verifier import OutcomeVerifier
 from tools.approval import set_approval_callback
 from tools.database import get_db_connection
 from tools.invoice_reader import read_invoice
+from tools.ledger import insert_ledger_entry
 
 
 def test_1_happy_path_with_approval():
@@ -267,3 +270,32 @@ def test_13_invoice_reader_blocks_paths_outside_invoice_directory():
     assert result["success"] is False
     assert result["blocked"] is True
     assert "GROQ_API_KEY" not in str(result)
+
+
+def test_14_simultaneous_duplicate_inserts_create_one_ledger_row():
+    """The database uniqueness guard makes duplicate writes race-safe."""
+    invoice_number = "INV-RACE-0001"
+    start_together = Barrier(2)
+
+    def attempt_insert(number):
+        start_together.wait()
+        return insert_ledger_entry(
+            invoice_number=number,
+            vendor_id=2,
+            amount=100.00,
+            currency="USD"
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(attempt_insert, [invoice_number, invoice_number.lower()]))
+
+    assert sum(result["success"] for result in results) == 1
+    assert sum(result.get("is_duplicate", False) for result in results) == 1
+
+    conn = get_db_connection()
+    count = conn.execute(
+        "SELECT COUNT(*) FROM ledger WHERE UPPER(invoice_number) = UPPER(?)",
+        (invoice_number,)
+    ).fetchone()[0]
+    conn.close()
+    assert count == 1

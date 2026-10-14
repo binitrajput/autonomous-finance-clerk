@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS ledger (
     notes TEXT
 );
 
+-- The same vendor invoice must not be posted twice, even if requests race.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_vendor_invoice_unique
+    ON ledger(vendor_id, UPPER(invoice_number));
+
 CREATE TABLE IF NOT EXISTS processed_invoices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     invoice_number TEXT UNIQUE NOT NULL,

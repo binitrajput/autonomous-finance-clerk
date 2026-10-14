@@ -1,6 +1,7 @@
 """Ledger tool for writing approved invoice transactions into the accounting database."""
 
 import config
+import sqlite3
 from typing import Dict, Any, Optional
 from tools.database import get_db_connection
 from tools.approval import consume_approval
@@ -54,8 +55,12 @@ def insert_ledger_entry(
         }
 
     # 2. Database Write
+    conn = None
     try:
         conn = get_db_connection()
+        # Acquire the SQLite write reservation before checking/inserting so
+        # simultaneous requests serialize; the unique index is the final guard.
+        conn.execute("BEGIN IMMEDIATE")
         cursor = conn.cursor()
 
         # Verify vendor exists
@@ -92,6 +97,7 @@ def insert_ledger_entry(
 
         conn.commit()
         conn.close()
+        conn = None
 
         return {
             "success": True,
@@ -103,7 +109,31 @@ def insert_ledger_entry(
             "status": "pending",
             "message": f"Successfully created ledger entry #{ledger_entry_id}"
         }
+    except sqlite3.IntegrityError as e:
+        duplicate = None
+        if conn is not None:
+            conn.rollback()
+            duplicate = conn.execute(
+                """SELECT 1 FROM ledger
+                   WHERE vendor_id = ? AND UPPER(invoice_number) = UPPER(?)
+                   UNION ALL
+                   SELECT 1 FROM processed_invoices
+                   WHERE UPPER(invoice_number) = UPPER(?)
+                   LIMIT 1""",
+                (vendor_id, invoice_number, invoice_number)
+            ).fetchone()
+            conn.close()
+        if duplicate:
+            return {
+                "success": False,
+                "is_duplicate": True,
+                "error": f"Invoice {invoice_number} has already been recorded."
+            }
+        return {"success": False, "error": f"Database constraint rejected the entry: {e}"}
     except Exception as e:
+        if conn is not None:
+            conn.rollback()
+            conn.close()
         return {
             "success": False,
             "error": f"Database insertion failed: {str(e)}"
