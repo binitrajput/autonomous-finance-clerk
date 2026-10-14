@@ -194,6 +194,8 @@ def test_9_invoice_listing_is_a_verified_read_only_task():
     assert result["verification"]["invoice_search_verified"] is True
     assert result["verification"]["invoice_count"] > 0
     assert "INV-2024-0042" in result["final_response"]
+    assert result["reasoning"]["source"] == "deterministic fallback"
+    assert result["reasoning"]["llm_decisions"] == 0
 
 
 def test_10_processing_task_is_not_verified_by_invoice_search_alone():
@@ -234,3 +236,24 @@ def test_11_rate_limit_retry_honors_provider_wait_time(monkeypatch):
     assert len(attempts) == 2
     assert sleeps == [8]
     assert decision["content"] == "Done"
+
+
+def test_12_run_reports_when_llm_made_the_decisions(monkeypatch):
+    """The run result identifies actual LLM decisions separately from fallback."""
+    agent = AutonomousAgent()
+    monkeypatch.setattr(agent, "_check_api_credentials", lambda: True)
+    decisions = [
+        {"tool_calls": [{"name": "search_invoices", "arguments": {"query": ""}}]},
+        {"content": "Invoice list complete.", "tool_calls": []}
+    ]
+    monkeypatch.setattr(agent, "_llm_step", lambda *_args, **_kwargs: decisions.pop(0))
+
+    result = agent.run("List the available invoices", verbose=False)
+
+    assert result["success"] is True
+    assert result["reasoning"] == {
+        "source": "LLM",
+        "model": agent.model_name,
+        "llm_decisions": 2,
+        "fallback_decisions": 0
+    }

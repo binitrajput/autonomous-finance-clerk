@@ -219,6 +219,14 @@ with tab_chat:
             finally:
                 set_approval_callback(None)
 
+            reasoning = result["reasoning"]
+            model_note = f" via `{reasoning['model']}`" if reasoning.get("model") else ""
+            status_container.write(
+                f"**Reasoning source:** {reasoning['source']}{model_note} "
+                f"({reasoning['llm_decisions']} LLM decisions, "
+                f"{reasoning['fallback_decisions']} fallback decisions)"
+            )
+
             for step in result["steps"]:
                 status_icon = "✅" if step["status"] == "success" else "⚠️"
                 status_container.write(f"**Step {step['step']}:** `{step['tool']}` — {status_icon} *{step['status'].upper()}*")

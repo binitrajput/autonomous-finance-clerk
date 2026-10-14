@@ -56,6 +56,8 @@ class AutonomousAgent:
         status = "COMPLETED"
         final_text = ""
         finished = False
+        llm_decisions = 0
+        fallback_decisions = 0
 
         for step_idx in range(1, self.max_steps + 1):
             if verbose:
@@ -66,8 +68,12 @@ class AutonomousAgent:
                 decision = self._llm_step(messages, task=task, memory=memory)
                 if decision.pop("_fallback_to_heuristic", False):
                     has_api_key = False
+                    fallback_decisions += 1
+                else:
+                    llm_decisions += 1
             else:
                 decision = self._heuristic_step(task, memory)
+                fallback_decisions += 1
 
             # 2. Check if agent finished without tool calls
             if not decision.get("tool_calls"):
@@ -158,9 +164,22 @@ class AutonomousAgent:
             ).strip()
 
         # 5. EVIDENCE & REPORT GENERATION
+        if llm_decisions and fallback_decisions:
+            reasoning_source = "mixed: LLM and deterministic fallback"
+        elif llm_decisions:
+            reasoning_source = "LLM"
+        else:
+            reasoning_source = "deterministic fallback"
+        reasoning = {
+            "source": reasoning_source,
+            "model": self.model_name if llm_decisions else None,
+            "llm_decisions": llm_decisions,
+            "fallback_decisions": fallback_decisions
+        }
         evidence = {
             "task_objective": task,
             "status": status,
+            "reasoning": reasoning,
             "discovered_facts": memory.facts,
             "verification_audit": verification,
             "errors_resolved": len(memory.errors_encountered)
@@ -180,6 +199,7 @@ class AutonomousAgent:
             "final_response": final_text,
             "steps": memory.get_all_steps_dict(),
             "facts": memory.facts,
+            "reasoning": reasoning,
             "verification": verification,
             "evidence": evidence,
             "report": report_md
