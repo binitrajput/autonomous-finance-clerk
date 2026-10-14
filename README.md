@@ -1,6 +1,6 @@
 # 🤖 Autonomous AI Task Worker — Finance & Operations Clerk
 
-[![Tests](https://img.shields.io/badge/Tests-9%2F9%20Passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-11%2F11%20Passing-brightgreen.svg)]()
 [![Architecture](https://img.shields.io/badge/Architecture-ReAct%20Loop-blue.svg)]()
 [![Model-Agnostic](https://img.shields.io/badge/LLM-Groq%20%7C%20Gemini%20%7C%20OpenAI%20%7C%20Claude-purple.svg)]()
 [![Verification](https://img.shields.io/badge/Audit-Independent%20DB%20Verification-emerald.svg)]()
@@ -51,6 +51,7 @@ The agent operates on an augmented **ReAct (Reason + Act + Observe)** execution 
 | Evaluation Criterion | Implementation in System |
 |:---|:---|
 | **Tool-driven workflow** | Uses LiteLLM function calling to search and read sample invoices, query company data, check duplicates, and create ledger entries. |
+| **Resilience** | Retries provider rate limits using the suggested delay and can recover from a failed vendor lookup in deterministic mode. |
 | **Offline fallback** | Runs a deterministic heuristic path when LiteLLM or a matching provider key is unavailable; the fallback supports common demo workflows. |
 | **Input safeguards** | Rejects malformed invoices and stops duplicate entries before writing to the ledger. |
 | **Approval gate** | Requests approval for invoices above the configured threshold before creating a ledger entry. |
@@ -159,7 +160,7 @@ Features:
 
 ---
 
-## 🧪 Automated Test Suite (9/9 Passing)
+## 🧪 Automated Test Suite (11/11 Passing)
 
 Run the test suite:
 ```bash
@@ -176,6 +177,8 @@ pytest tests/ -v
 7. `test_7_outcome_verification_catches_discrepancy`: Confirms the verifier rejects a missing ledger record.
 8. `test_8_generalization_analytical_query`: Answers a read-only ledger query.
 9. `test_9_invoice_listing_is_a_verified_read_only_task`: Lists sample invoices and verifies the search result without requiring a ledger write.
+10. `test_10_processing_task_is_not_verified_by_invoice_search_alone`: Prevents a successful file search from falsely verifying an incomplete ledger workflow.
+11. `test_11_rate_limit_retry_honors_provider_wait_time`: Retries a simulated provider rate limit after the suggested delay.
 
 Tests force deterministic mode and reset the local SQLite database to its seed state before each scenario. They do not exercise live provider/API behavior.
 

@@ -1,5 +1,7 @@
 import os
 import json
+import math
+import re
 import time
 from typing import Dict, Any, List, Optional
 
@@ -203,11 +205,18 @@ class AutonomousAgent:
                 break
             except Exception as e:
                 error_text = str(e).lower()
-                is_transient = "503" in error_text or "serviceunavailable" in type(e).__name__.lower()
+                exception_name = type(e).__name__.lower()
+                is_rate_limited = "429" in error_text or "ratelimit" in exception_name or "rate limit reached" in error_text
+                is_transient = is_rate_limited or "503" in error_text or "serviceunavailable" in exception_name
                 if is_transient and attempt + 1 < max_attempts:
-                    wait_seconds = min(2 ** attempt, 4)
+                    retry_delay = re.search(r"try again in\s+([\d.]+)\s*s", error_text)
+                    if is_rate_limited and retry_delay:
+                        wait_seconds = min(max(1, math.ceil(float(retry_delay.group(1)))), 60)
+                    else:
+                        wait_seconds = min(2 ** attempt, 4)
                     provider = self.model_name.split("/", 1)[0]
-                    print(f"⚠️ {provider} is temporarily unavailable; retrying in {wait_seconds}s ({attempt + 1}/{max_attempts - 1}).")
+                    issue = "rate limited" if is_rate_limited else "temporarily unavailable"
+                    print(f"⚠️ {provider} is {issue}; retrying in {wait_seconds}s ({attempt + 1}/{max_attempts - 1}).")
                     time.sleep(wait_seconds)
                     continue
                 print(f"⚠️ LLM call error: {str(e)}. Falling back to autonomous heuristic engine.")
@@ -334,15 +343,32 @@ class AutonomousAgent:
             return {
                 "tool_calls": [{
                     "name": "query_database",
-                    "arguments": {"query": f"SELECT * FROM vendors WHERE name LIKE '%{vendor_name[:4]}%'"}
+                    "arguments": {"query": "SELECT * FROM vendors"}
                 }]
             }
 
-        db_step = next(s for s in steps if s.tool == "query_database")
+        db_step = next(s for s in reversed(steps) if s.tool == "query_database")
+        if not db_step.result.get("success"):
+            return {
+                "tool_calls": [{
+                    "name": "query_database",
+                    "arguments": {"query": "SELECT * FROM vendors"}
+                }]
+            }
         vendors = db_step.result.get("rows", [])
-        if not vendors:
+        vendor_key = vendor_name.strip().casefold()
+        matched_vendors = [
+            vendor for vendor in vendors
+            if vendor_key and (
+                vendor_key == str(vendor.get("name", "")).casefold()
+                or vendor_key.startswith(str(vendor.get("name", "")).casefold())
+                or str(vendor.get("name", "")).casefold().startswith(vendor_key)
+                or vendor_key.split()[:1] == str(vendor.get("name", "")).casefold().split()[:1]
+            )
+        ]
+        if not matched_vendors:
             return {"content": f"Vendor '{vendor_name}' could not be identified in company database."}
-        vendor_id = vendors[0]["id"]
+        vendor_id = matched_vendors[0]["id"]
 
         # Step 5: Approval if > $1000
         if amount > config.APPROVAL_THRESHOLD and "request_user_approval" not in tools_called:

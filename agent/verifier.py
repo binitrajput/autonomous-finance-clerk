@@ -82,6 +82,23 @@ class OutcomeVerifier:
                 "reason": "Execution safely stopped; the requested ledger entry was not created."
             }
 
+        goal = getattr(memory, "goal", "").casefold()
+        write_intent = any(word in goal.split() for word in (
+            "process", "enter", "record", "post", "pay", "submit", "create", "book"
+        ))
+        if write_intent:
+            return {
+                "passed": False,
+                "reason": "A ledger entry was requested, but no verified ledger entry was created."
+            }
+
+        failed_step = next((s for s in reversed(memory.steps) if s.status == "error"), None)
+        if failed_step:
+            return {
+                "passed": False,
+                "reason": f"The {failed_step.tool} step failed; the read-only task was not verified."
+            }
+
         # A successful read-only query is verifiable evidence of completion.
         query_step = next((s for s in reversed(memory.steps) if s.tool == "query_database"), None)
         if query_step and query_step.result.get("success"):

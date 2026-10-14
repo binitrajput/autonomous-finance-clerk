@@ -11,10 +11,13 @@ Covers:
 """
 
 import sqlite3
+from types import SimpleNamespace
 import pytest
 
 import config
+import agent.core as agent_core
 from agent.core import AutonomousAgent
+from agent.memory import WorkingMemory
 from agent.verifier import OutcomeVerifier
 from tools.approval import set_approval_callback
 from tools.database import get_db_connection
@@ -191,3 +194,43 @@ def test_9_invoice_listing_is_a_verified_read_only_task():
     assert result["verification"]["invoice_search_verified"] is True
     assert result["verification"]["invoice_count"] > 0
     assert "INV-2024-0042" in result["final_response"]
+
+
+def test_10_processing_task_is_not_verified_by_invoice_search_alone():
+    """A discovery step cannot prove a requested ledger write succeeded."""
+    memory = WorkingMemory(goal="Process the latest Globex invoice and enter it into the system")
+    memory.add_step("search_invoices", {}, {"success": True, "count": 1, "files": [{}]})
+    memory.add_step("read_invoice", {}, {"success": True, "invoice_number": "INV-2024-0078"})
+    memory.add_step("query_database", {}, {"success": False, "error": "no such column: vendor_id"}, status="error")
+
+    verification = OutcomeVerifier.verify_execution(memory)
+
+    assert verification["passed"] is False
+    assert "no verified ledger entry" in verification["reason"].lower()
+
+
+def test_11_rate_limit_retry_honors_provider_wait_time(monkeypatch):
+    """A Groq rate limit response is retried after its suggested delay."""
+    class RateLimitError(Exception):
+        pass
+
+    attempts = []
+    sleeps = []
+
+    def completion(**_kwargs):
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise RateLimitError("Rate limit reached. Please try again in 7.5975s.")
+        message = SimpleNamespace(content="Done", tool_calls=None)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    monkeypatch.setattr(agent_core.litellm, "completion", completion)
+    monkeypatch.setattr(agent_core.time, "sleep", sleeps.append)
+    monkeypatch.setattr(config, "MAX_RETRIES", 2)
+
+    agent = AutonomousAgent(model_name="groq/openai/gpt-oss-120b")
+    decision = agent._llm_step([{"role": "user", "content": "hello"}], task="hello", memory=WorkingMemory())
+
+    assert len(attempts) == 2
+    assert sleeps == [8]
+    assert decision["content"] == "Done"
