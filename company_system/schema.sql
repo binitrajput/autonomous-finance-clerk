@@ -47,3 +47,14 @@ CREATE TABLE IF NOT EXISTS processed_invoices (
     processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     ledger_entry_id INTEGER REFERENCES ledger(id)
 );
+
+-- Durable record of human approval decisions for high-value actions.
+CREATE TABLE IF NOT EXISTS approval_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_number TEXT NOT NULL,
+    amount REAL NOT NULL,
+    decision TEXT NOT NULL CHECK(decision IN ('approved', 'rejected')),
+    decision_source TEXT NOT NULL,
+    context_json TEXT NOT NULL DEFAULT '{}',
+    decided_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

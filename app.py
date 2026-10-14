@@ -18,7 +18,7 @@ except Exception:
 
 import config
 from agent.core import AutonomousAgent, LITELLM_AVAILABLE
-from tools.approval import set_approval_callback
+from tools.approval import record_approval_decision, set_approval_callback
 from tools.duplicate_checker import check_duplicate
 from tools.invoice_reader import read_invoice
 from tools.invoice_search import search_invoices
@@ -186,11 +186,23 @@ with tab_chat:
                 }
                 st.session_state.pending_agent_task = pending_approval["task"]
             else:
+                logged = record_approval_decision(
+                    {
+                        "invoice_number": invoice["invoice_number"],
+                        "amount": invoice["total_amount"],
+                        "vendor": invoice.get("vendor_name"),
+                        "po_number": invoice.get("po_number"),
+                    },
+                    approved=False,
+                    decision_source="streamlit_form",
+                )
                 st.session_state.chat_history.append({
                     "role": "assistant",
                     "content": f"Safely stopped: approval was declined for {invoice['invoice_number']}; no ledger entry was created."
                 })
                 st.info(f"Approval declined for **{invoice['invoice_number']}**. The task was not processed.")
+                if not logged:
+                    st.error("The rejection could not be saved to the approval audit log.")
             if decision == "Approve":
                 st.rerun()
 
@@ -258,6 +270,9 @@ with tab_db:
     with col_b:
         st.markdown("#### `processed_invoices` (Tracking)")
         st.dataframe(load_db_table("processed_invoices"), use_container_width=True)
+
+    st.markdown("#### `approval_events` Table (Approval Audit Trail)")
+    st.dataframe(load_db_table("approval_events"), use_container_width=True)
 
     col_c, col_d = st.columns(2)
     with col_c:

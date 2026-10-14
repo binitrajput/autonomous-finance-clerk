@@ -1,12 +1,17 @@
 """Human-in-the-loop approval tool for high-value actions and anomalous states."""
 
 from typing import Dict, Any, Optional, Callable
+import json
+import logging
 import time
+
+from tools.database import get_db_connection
 
 # Global hook for testing or UI override
 _APPROVAL_CALLBACK: Optional[Callable[[str, Dict[str, Any]], bool]] = None
 _APPROVED_ACTIONS: Dict[tuple, float] = {}
 _APPROVAL_TTL_SECONDS = 600
+logger = logging.getLogger(__name__)
 
 
 def set_approval_callback(callback: Optional[Callable[[str, Dict[str, Any]], bool]]):
@@ -22,16 +27,38 @@ def consume_approval(invoice_number: str, amount: float) -> bool:
     return expires_at is not None and expires_at >= time.time()
 
 
-def _record_approval(context: Dict[str, Any]) -> None:
+def _record_approval(context: Dict[str, Any], decision: bool, decision_source: str) -> bool:
     invoice_number = context.get("invoice_number", context.get("invoice"))
     amount = context.get("amount", context.get("total_amount"))
     if invoice_number is None or amount is None:
-        return
+        return False
     try:
         key = (str(invoice_number).strip().upper(), round(float(amount), 2))
-    except (TypeError, ValueError):
-        return
-    _APPROVED_ACTIONS[key] = time.time() + _APPROVAL_TTL_SECONDS
+        if not key[0] or key[1] <= 0:
+            return False
+        conn = get_db_connection()
+        try:
+            conn.execute(
+                """INSERT INTO approval_events
+                   (invoice_number, amount, decision, decision_source, context_json)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (str(invoice_number).strip(), key[1], "approved" if decision else "rejected",
+                 decision_source, json.dumps(context, default=str, sort_keys=True))
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception("Could not persist approval decision; failing closed")
+        return False
+    if decision:
+        _APPROVED_ACTIONS[key] = time.time() + _APPROVAL_TTL_SECONDS
+    return True
+
+
+def record_approval_decision(context: Dict[str, Any], approved: bool, decision_source: str) -> bool:
+    """Persist a decision made by a UI before agent execution starts."""
+    return _record_approval(context, approved, decision_source)
 
 
 def request_user_approval(question: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -50,8 +77,15 @@ def request_user_approval(question: str, context: Dict[str, Any] = None) -> Dict
     # If an automated callback is registered (e.g. in test suite or Streamlit session)
     if _APPROVAL_CALLBACK is not None:
         approved = bool(_APPROVAL_CALLBACK(question, ctx))
-        if approved:
-            _record_approval(ctx)
+        recorded = _record_approval(ctx, approved, "configured_callback")
+        if not recorded:
+            return {
+                "success": False,
+                "approved": False,
+                "question": question,
+                "response": "Approval decision could not be written to the audit log; action blocked.",
+                "context": ctx
+            }
         return {
             "success": True,
             "approved": approved,
@@ -75,8 +109,15 @@ def request_user_approval(question: str, context: Dict[str, Any] = None) -> Dict
         # Non-interactive fallback
         approved = False
 
-    if approved:
-        _record_approval(ctx)
+    recorded = _record_approval(ctx, approved, "interactive_console")
+    if not recorded:
+        return {
+            "success": False,
+            "approved": False,
+            "question": question,
+            "response": "Approval decision could not be written to the audit log; action blocked.",
+            "context": ctx
+        }
 
     return {
         "success": True,

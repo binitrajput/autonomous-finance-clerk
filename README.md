@@ -55,6 +55,7 @@ The agent operates on an augmented **ReAct (Reason + Act + Observe)** execution 
 | **Offline fallback** | Runs a deterministic heuristic path when LiteLLM or a matching provider key is unavailable; the fallback supports common demo workflows. |
 | **Input safeguards** | Restricts invoice reads to JSON files under the configured invoice directory, rejects malformed invoices, and uses a database uniqueness guard against duplicate ledger writes. |
 | **Approval gate** | Requests approval for invoices above the configured threshold before creating a ledger entry. |
+| **Approval audit trail** | Persists approved and rejected decisions with invoice, amount, context, decision source, and timestamp; blocks the action if the decision cannot be logged. |
 | **Outcome checks** | Independently checks inserted ledger records and treats successful read-only invoice searches and database queries as verifiable tasks. Safe halts remain incomplete outcomes. |
 | **Audit trail** | Keeps tool-step results and produces a Markdown execution report. |
 
