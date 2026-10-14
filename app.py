@@ -6,9 +6,22 @@ import sqlite3
 import os
 import json
 
+# Streamlit Community Cloud stores credentials in st.secrets. Expose supported
+# values to the existing environment-based configuration before importing it.
+try:
+    for secret_key in ("MODEL_NAME", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        if not os.getenv(secret_key) and st.secrets.get(secret_key):
+            os.environ[secret_key] = str(st.secrets[secret_key])
+except Exception:
+    # Local runs may not have a Streamlit secrets file configured.
+    pass
+
 import config
 from agent.core import AutonomousAgent
 from tools.approval import set_approval_callback
+from tools.duplicate_checker import check_duplicate
+from tools.invoice_reader import read_invoice
+from tools.invoice_search import search_invoices
 from company_system.setup_db import initialize_database, reset_database
 
 # Page Configuration
@@ -26,7 +39,13 @@ initialize_database()
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "auto_approve" not in st.session_state:
-    st.session_state.auto_approve = True
+    st.session_state.auto_approve = False
+if "pending_invoice_approval" not in st.session_state:
+    st.session_state.pending_invoice_approval = None
+if "pending_agent_task" not in st.session_state:
+    st.session_state.pending_agent_task = None
+if "approved_invoice" not in st.session_state:
+    st.session_state.approved_invoice = None
 
 # Helper to load DB tables
 def load_db_table(table_name: str) -> pd.DataFrame:
@@ -42,9 +61,16 @@ with st.sidebar:
     st.markdown("---")
 
     st.subheader("⚙️ Agent Controls")
+    model_options = list(dict.fromkeys([
+        config.MODEL_NAME,
+        "gemini/gemini-3.8-flash",
+        "openai/gpt-4o-mini",
+        "anthropic/claude-3-5-sonnet",
+        "Deterministic Engine"
+    ]))
     model_choice = st.selectbox(
         "Active Model Brain",
-        ["gemini/gemini-2.0-flash", "openai/gpt-4o-mini", "anthropic/claude-3-5-sonnet", "Deterministic Engine"],
+        model_options,
         index=0
     )
     st.caption("Supports LiteLLM & pure Python autonomous fallback.")
@@ -54,7 +80,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("🛡️ Human-in-the-Loop Gate")
-    st.session_state.auto_approve = st.toggle("Simulate User Approval (Yes)", value=True, help="When off, simulates user rejecting high-value payments > $1,000.")
+    st.caption("High-value invoices pause for approval of the specific invoice before processing.")
 
     st.markdown("---")
     if st.button("🔄 Reset Company Database", use_container_width=True):
@@ -97,43 +123,115 @@ with tab_chat:
     user_task = st.chat_input("Enter natural language task for the AI worker...")
     prompt_to_run = user_task or quick_prompt
 
-    if prompt_to_run:
-        st.session_state.chat_history.append({"role": "user", "content": prompt_to_run})
+    def request_specific_approval(question, context):
+        """Accept only the invoice and amount the user reviewed in the form."""
+        approved_invoice = st.session_state.get("approved_invoice")
+        invoice_number = context.get("invoice_number", context.get("invoice"))
+        try:
+            matches = (
+                approved_invoice is not None
+                and str(invoice_number).strip().upper() == approved_invoice["invoice_number"].strip().upper()
+                and round(float(context.get("amount")), 2) == round(float(approved_invoice["amount"]), 2)
+            )
+        except (TypeError, ValueError, AttributeError):
+            matches = False
+        if matches:
+            st.session_state.approved_invoice = None
+        return matches
 
+    task_to_run = st.session_state.pending_agent_task
+    if task_to_run:
+        st.session_state.pending_agent_task = None
+    elif prompt_to_run:
+        st.session_state.chat_history.append({"role": "user", "content": prompt_to_run})
+        # Preview the same newest matching invoice so approval is tied to visible details.
+        search_result = search_invoices(query=prompt_to_run)
+        files = search_result.get("files", []) if search_result.get("success") else []
+        preview = read_invoice(files[0]["file_path"]) if files else {}
+        task_lower = prompt_to_run.lower()
+        intends_write = any(word in task_lower for word in ("process", "enter", "record", "add", "submit"))
+        if (intends_write and preview.get("success")
+                and preview.get("total_amount", 0) > config.APPROVAL_THRESHOLD):
+            duplicate = check_duplicate(preview["invoice_number"])
+            if not duplicate.get("is_duplicate"):
+                st.session_state.pending_invoice_approval = {
+                    "task": prompt_to_run,
+                    "invoice": preview,
+                }
+            else:
+                task_to_run = prompt_to_run
+        else:
+            task_to_run = prompt_to_run
+
+    pending_approval = st.session_state.pending_invoice_approval
+    if pending_approval:
+        invoice = pending_approval["invoice"]
+        st.warning("This invoice exceeds the approval threshold. Review the details before the agent starts processing it.")
+        st.write(
+            f"**Vendor:** {invoice.get('vendor_name')}  \n"
+            f"**Invoice:** {invoice.get('invoice_number')}  \n"
+            f"**Amount:** {invoice.get('currency', 'USD')} {invoice.get('total_amount'):,.2f}  \n"
+            f"**Due date:** {invoice.get('due_date') or 'Not provided'}  \n"
+            f"**Purchase order:** {invoice.get('po_number') or 'Not provided'}"
+        )
+        with st.form("invoice_approval_form"):
+            decision = st.radio("Do you approve processing this invoice?", ["Reject", "Approve"], horizontal=True)
+            submitted = st.form_submit_button("Confirm decision")
+        if submitted:
+            st.session_state.pending_invoice_approval = None
+            if decision == "Approve":
+                st.session_state.approved_invoice = {
+                    "invoice_number": invoice["invoice_number"],
+                    "amount": invoice["total_amount"],
+                }
+                st.session_state.pending_agent_task = pending_approval["task"]
+            else:
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": f"Safely stopped: approval was declined for {invoice['invoice_number']}; no ledger entry was created."
+                })
+                st.info(f"Approval declined for **{invoice['invoice_number']}**. The task was not processed.")
+            if decision == "Approve":
+                st.rerun()
+
+    if task_to_run:
         with st.chat_message("user"):
-            st.write(prompt_to_run)
+            st.write(task_to_run)
 
         with st.chat_message("assistant"):
-            status_container = st.status(f"🤖 Autonomous Worker executing: '{prompt_to_run}'...", expanded=True)
-            
-            # Configure approval hook
-            set_approval_callback(lambda q, ctx: st.session_state.auto_approve)
+            status_container = st.status(f"🤖 Autonomous Worker executing: '{task_to_run}'...", expanded=True)
+            status_container.write(
+                f"Waiting for the selected model when reasoning is needed "
+                f"(request timeout: {config.LLM_TIMEOUT_SECONDS:g}s). If it times out, the agent will switch to its deterministic fallback."
+            )
+            set_approval_callback(request_specific_approval)
 
-            # Initialize agent
             agent_model = None if model_choice == "Deterministic Engine" else model_choice
             agent = AutonomousAgent(model_name=agent_model)
+            try:
+                result = agent.run(task_to_run, verbose=False)
+            finally:
+                set_approval_callback(None)
 
-            result = agent.run(prompt_to_run, verbose=False)
-
-            # Display Step-by-Step execution trace
             for step in result["steps"]:
                 status_icon = "✅" if step["status"] == "success" else "⚠️"
                 status_container.write(f"**Step {step['step']}:** `{step['tool']}` — {status_icon} *{step['status'].upper()}*")
-                with status_container.expander(f"Inspect Tool Payload ({step['tool']})"):
-                    st.json({"arguments": step["arguments"], "result": step["result"]})
+                status_container.json({"arguments": step["arguments"], "result": step["result"]})
 
-            if result["verification"].get("passed"):
-                status_container.update(label="✅ Task Finished & Verified in Database!", state="complete", expanded=False)
+            if result["success"]:
+                status_container.update(label="✅ Task completed and verified", state="complete", expanded=False)
+            elif result["verification"].get("safe_halt"):
+                status_container.update(label=f"🛑 Safely stopped ({result['status']})", state="complete", expanded=False)
             else:
-                status_container.update(label=f"⚠️ Task Finished ({result['status']})", state="complete", expanded=False)
+                status_container.update(label=f"⚠️ Outcome not verified ({result['status']})", state="error", expanded=False)
 
-            # Outcome Verification Badge
-            if result["verification"].get("passed"):
-                st.success(f"**Outcome Verification Passed:** Record confirmed in SQLite database.")
+            if result["success"]:
+                st.success("**Outcome verified:** the requested database result was confirmed.")
+            elif result["verification"].get("safe_halt"):
+                st.info(f"**Safely stopped:** {result['verification'].get('reason')}")
             else:
-                st.warning(f"**Outcome Verification Note:** {result['verification'].get('reason')}")
+                st.warning(f"**Not verified:** {result['verification'].get('reason')}")
 
-            # Final Report
             st.markdown("### 📄 Completion & Audit Report")
             st.markdown(result["report"])
 

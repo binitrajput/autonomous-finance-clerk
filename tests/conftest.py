@@ -14,7 +14,9 @@ import config
 
 
 @pytest.fixture(autouse=True)
-def clean_database():
-    """Reset the database to clean seed state before each test."""
+def clean_database(monkeypatch):
+    """Reset the database to clean seed state before each test and mock offline mode for fast execution."""
+    from agent.core import AutonomousAgent
+    monkeypatch.setattr(AutonomousAgent, "_check_api_credentials", lambda self: False)
     reset_database(config.DB_PATH)
     yield

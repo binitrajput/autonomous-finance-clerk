@@ -39,6 +39,14 @@ def read_invoice(file_path: str) -> Dict[str, Any]:
             "file_path": file_path
         }
 
+    if not isinstance(data, dict):
+        return {
+            "success": False,
+            "error": "Malformed invoice: expected a JSON object.",
+            "is_malformed": True,
+            "file_path": file_path
+        }
+
     # Validation rules
     missing_fields = []
     for required in ["invoice_number", "vendor_name", "total_amount"]:

@@ -3,6 +3,7 @@
 import config
 from typing import Dict, Any, Optional
 from tools.database import get_db_connection
+from tools.approval import consume_approval
 
 
 def insert_ledger_entry(
@@ -37,14 +38,16 @@ def insert_ledger_entry(
         Dict with status, ledger_entry_id, or approval error.
     """
     # 1. Safety Threshold Check
-    if amount > config.APPROVAL_THRESHOLD and not user_approved:
+    if amount > config.APPROVAL_THRESHOLD and (
+        not user_approved or not consume_approval(invoice_number, amount)
+    ):
         return {
             "success": False,
             "requires_approval": True,
             "error": (
                 f"Policy Violation: Invoice amount ${amount:,.2f} exceeds the "
                 f"auto-approval limit (${config.APPROVAL_THRESHOLD:,.2f}). "
-                f"You MUST call request_user_approval before writing this entry."
+                "A matching, explicit approval is required before writing this entry."
             ),
             "amount": amount,
             "threshold": config.APPROVAL_THRESHOLD

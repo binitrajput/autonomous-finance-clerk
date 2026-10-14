@@ -54,9 +54,9 @@ The agent operates on an augmented **ReAct (Reason + Act + Observe)** execution 
 | **Execution** | Performs real file I/O, queries and inserts into a real SQLite database, rather than mocking outputs. |
 | **Reliability & Self-Healing** | Recovers from fuzzy vendor names (e.g. *"Acme Corporation"* vs *"Acme Corp"*), catches malformed payloads, and aborts duplicates. |
 | **Verification** | Executes an independent SQL assertion (`verify_ledger_entry`) confirming the physical database record exists and amounts match before completing. |
-| **Safety & HITL** | Hard-coded approval gate: any transaction exceeding **$1,000.00** pauses execution to require human sign-off. |
+| **Safety & HITL** | High-value entries require an invoice-and-amount-matched approval grant; the Streamlit preapproval control defaults off. |
 | **Generalization** | The core ReAct loop seamlessly answers analytical database questions (e.g. *"How many pending invoices do we have?"*) using the same tools. |
-| **Engineering Quality** | Clean separation of concerns (`agent/`, `tools/`, `company_system/`, `tests/`), typed interfaces, and zero hallucination errors. |
+| **Engineering Quality** | Clean separation of concerns (`agent/`, `tools/`, `company_system/`, `tests/`) and typed interfaces. |
 
 ---
 
@@ -145,7 +145,7 @@ streamlit run app.py
 ```
 Features:
 - Real-time step-by-step agent thought process
-- Interactive Human-in-the-Loop approval modal
+- High-value approval control for the next task (off by default; enabling it preapproves high-value requests in that task)
 - Live ERP Database explorer (`ledger`, `vendors`, `purchase_orders`)
 - 1-Click test scenario launcher
 
@@ -175,4 +175,9 @@ pytest tests/ -v
 Deploy in 1-click on [Streamlit Community Cloud](https://share.streamlit.io):
 1. Connect your GitHub repository: `binitrajput/autonomous-finance-clerk`
 2. Set Main file path: `app.py`
-3. Click **Deploy**!
+3. Add the provider key in **App settings → Secrets**, for example:
+   ```toml
+   MODEL_NAME = "gemini/gemini-3.8-flash"
+   GEMINI_API_KEY = "your_gemini_api_key_here"
+   ```
+4. Click **Deploy**. The SQLite database is seeded demo data; use managed storage for durable production records.

@@ -8,6 +8,7 @@ CORE PRINCIPLES:
 2. ACCURACY & EVIDENCE: Use available tools to search files, read invoices, query the company database, check for duplicates, and record transactions.
 3. HUMAN-IN-THE-LOOP SAFETY:
    - For any payment/invoice where the amount exceeds $1,000.00, you MUST call `request_user_approval` BEFORE inserting the ledger entry.
+   - Include the exact `invoice_number` and numeric `amount` in the approval context; the ledger checks for a matching approval.
    - If the user approves, call `insert_ledger_entry` with `user_approved=true`.
    - If the user rejects or denies approval, halt safely and report that the invoice was rejected by user.
 4. ERROR RECOVERY & SELF-HEALING:

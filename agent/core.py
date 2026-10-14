@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from typing import Dict, Any, List, Optional
 
 try:
@@ -23,6 +24,9 @@ class AutonomousAgent:
 
     def __init__(self, model_name: str = None, max_steps: int = None):
         self.model_name = model_name or config.MODEL_NAME
+        # Auto-prefix for Groq if GROQ_API_KEY is present and model doesn't already have groq/
+        if os.getenv("GROQ_API_KEY") and not self.model_name.startswith("groq/") and ("gpt-oss" in self.model_name or "llama" in self.model_name or "qwen" in self.model_name):
+            self.model_name = f"groq/{self.model_name}"
         self.max_steps = max_steps or config.MAX_STEPS
         self.tool_schemas = get_tool_schemas()
 
@@ -30,11 +34,15 @@ class AutonomousAgent:
         """Run the autonomous agent loop to achieve the natural language goal."""
         memory = WorkingMemory(goal=task)
 
+        # Check if an API key is configured for the active model
+        has_api_key = self._check_api_credentials()
+
         if verbose:
+            mode_desc = f"LLM Mode ({self.model_name})" if has_api_key else "Deterministic Heuristic Engine (Offline)"
             print("\n" + "="*70)
             print(f"🤖 [AUTONOMOUS TASK WORKER INITIALIZED]")
             print(f"🎯 Objective: {task}")
-            print(f"🧠 Model: {self.model_name}")
+            print(f"🧠 Brain: {mode_desc}")
             print("="*70)
 
         # Messages trace for the conversation
@@ -45,9 +53,7 @@ class AutonomousAgent:
 
         status = "COMPLETED"
         final_text = ""
-
-        # Check if an API key is configured for the active model
-        has_api_key = self._check_api_credentials()
+        finished = False
 
         for step_idx in range(1, self.max_steps + 1):
             if verbose:
@@ -55,13 +61,16 @@ class AutonomousAgent:
 
             # 1. Decide next action: either via LLM or via autonomous heuristic engine
             if has_api_key:
-                decision = self._llm_step(messages)
+                decision = self._llm_step(messages, task=task, memory=memory)
+                if decision.pop("_fallback_to_heuristic", False):
+                    has_api_key = False
             else:
                 decision = self._heuristic_step(task, memory)
 
             # 2. Check if agent finished without tool calls
             if not decision.get("tool_calls"):
                 final_text = decision.get("content", "Task execution finished.")
+                finished = True
                 if verbose:
                     print(f"🏁 Agent concluded: {final_text}")
                 break
@@ -77,12 +86,17 @@ class AutonomousAgent:
 
                 # ACT: Execute tool
                 tool_result = execute_tool(tool_name, tool_args)
-                tool_status = "success" if tool_result.get("success", False) else "error"
+                tool_succeeded = tool_result.get("success", False)
+                if tool_name == "request_user_approval":
+                    tool_succeeded = tool_succeeded and tool_result.get("approved", False)
+                elif tool_name == "verify_ledger_entry":
+                    tool_succeeded = tool_succeeded and tool_result.get("verified", False)
+                tool_status = "success" if tool_succeeded else "error"
 
                 if verbose:
                     print(f"📤 Status: {tool_status.upper()}")
-                    if not tool_result.get("success"):
-                        print(f"⚠️ Error/Warning: {tool_result.get('error', tool_result.get('reason'))}")
+                    if not tool_succeeded:
+                        print(f"⚠️ Error/Warning: {tool_result.get('error', tool_result.get('reason', tool_result.get('message')))}")
                     else:
                         print(f"✅ Result Summary: {self._summarize_result(tool_name, tool_result)}")
 
@@ -128,8 +142,18 @@ class AutonomousAgent:
             if status in ["DUPLICATE_BLOCKED", "MALFORMED_BLOCKED", "APPROVAL_REJECTED"]:
                 break
 
+        if not finished and status == "COMPLETED":
+            status = "FAILED"
+            final_text = f"Stopped after reaching the maximum of {self.max_steps} steps before completing the task."
+
         # 4. INDEPENDENT VERIFICATION STEP
         verification = OutcomeVerifier.verify_execution(memory)
+        if status == "COMPLETED" and not verification.get("passed"):
+            status = "FAILED"
+            final_text = (
+                f"{final_text}\n\nOutcome not verified: "
+                f"{verification.get('reason', 'No verifiable result was recorded.')}"
+            ).strip()
 
         # 5. EVIDENCE & REPORT GENERATION
         evidence = {
@@ -149,7 +173,7 @@ class AutonomousAgent:
         )
 
         return {
-            "success": verification.get("passed", False) and status != "FAILED",
+            "success": verification.get("passed", False) and status == "COMPLETED",
             "status": status,
             "final_response": final_text,
             "steps": memory.get_all_steps_dict(),
@@ -159,37 +183,55 @@ class AutonomousAgent:
             "report": report_md
         }
 
-    def _llm_step(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _llm_step(self, messages: List[Dict[str, Any]], task: str = "", memory: Optional[WorkingMemory] = None) -> Dict[str, Any]:
         """Make an LLM call via LiteLLM with native tool calling."""
-        try:
-            response = litellm.completion(
-                model=self.model_name,
-                messages=messages,
-                tools=self.tool_schemas,
-                tool_choice="auto",
-                temperature=0.0
-            )
+        request_options = {
+            "model": self.model_name,
+            "messages": messages,
+            "tools": self.tool_schemas,
+            "tool_choice": "auto",
+            "api_key": self._api_key_for_model(),
+            "timeout": config.LLM_TIMEOUT_SECONDS
+        }
+        if "gemini-3" not in self.model_name.lower():
+            request_options["temperature"] = 0.0
 
-            msg = response.choices[0].message
-            tool_calls = []
+        max_attempts = max(1, config.MAX_RETRIES)
+        for attempt in range(max_attempts):
+            try:
+                response = litellm.completion(**request_options)
+                break
+            except Exception as e:
+                error_text = str(e).lower()
+                is_transient = "503" in error_text or "serviceunavailable" in type(e).__name__.lower()
+                if is_transient and attempt + 1 < max_attempts:
+                    wait_seconds = min(2 ** attempt, 4)
+                    provider = self.model_name.split("/", 1)[0]
+                    print(f"⚠️ {provider} is temporarily unavailable; retrying in {wait_seconds}s ({attempt + 1}/{max_attempts - 1}).")
+                    time.sleep(wait_seconds)
+                    continue
+                print(f"⚠️ LLM call error: {str(e)}. Falling back to autonomous heuristic engine.")
+                decision = self._heuristic_step(task, memory)
+                decision["_fallback_to_heuristic"] = True
+                return decision
 
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                for tc in msg.tool_calls:
-                    fn = tc.function
-                    args = json.loads(fn.arguments) if isinstance(fn.arguments, str) else fn.arguments
-                    tool_calls.append({
-                        "id": getattr(tc, "id", "call_1"),
-                        "name": fn.name,
-                        "arguments": args
-                    })
+        msg = response.choices[0].message
+        tool_calls = []
 
-            return {
-                "content": getattr(msg, "content", ""),
-                "tool_calls": tool_calls
-            }
-        except Exception as e:
-            print(f"⚠️ LLM call error: {str(e)}. Falling back to autonomous heuristic engine.")
-            return self._heuristic_step(messages[-1]["content"], None)
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            for tc in msg.tool_calls:
+                fn = tc.function
+                args = json.loads(fn.arguments) if isinstance(fn.arguments, str) else fn.arguments
+                tool_calls.append({
+                    "id": getattr(tc, "id", "call_1"),
+                    "name": fn.name,
+                    "arguments": args
+                })
+
+        return {
+            "content": getattr(msg, "content", ""),
+            "tool_calls": tool_calls
+        }
 
     def _heuristic_step(self, task: str, memory: Optional[WorkingMemory]) -> Dict[str, Any]:
         """Autonomous heuristic decision engine for offline/deterministic execution."""
@@ -336,13 +378,20 @@ class AutonomousAgent:
         """Check if environment variables contain valid keys for the configured model."""
         if not LITELLM_AVAILABLE:
             return False
-        if "gemini" in self.model_name.lower():
-            return bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
-        if "openai" in self.model_name.lower() or "gpt" in self.model_name.lower():
-            return bool(os.getenv("OPENAI_API_KEY"))
-        if "anthropic" in self.model_name.lower() or "claude" in self.model_name.lower():
-            return bool(os.getenv("ANTHROPIC_API_KEY"))
-        return False
+        return bool(self._api_key_for_model())
+
+    def _api_key_for_model(self) -> Optional[str]:
+        """Return the credential matching this model's provider."""
+        model = self.model_name.lower()
+        if model.startswith("groq/"):
+            return os.getenv("GROQ_API_KEY")
+        if model.startswith("gemini/") or "gemini" in model:
+            return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if model.startswith("anthropic/") or "claude" in model:
+            return os.getenv("ANTHROPIC_API_KEY")
+        if model.startswith("openai/") or "gpt" in model:
+            return os.getenv("OPENAI_API_KEY")
+        return None
 
     def _summarize_result(self, tool_name: str, result: Dict[str, Any]) -> str:
         """Produce a one-line human-readable summary of tool execution."""

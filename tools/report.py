@@ -27,7 +27,13 @@ def generate_report(
     ev = evidence or {}
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    status_badge = "✅ COMPLETED & VERIFIED" if status == "SUCCESS" else f"⚠️ {status}"
+    verification = ev.get("verification_audit", {})
+    if status == "COMPLETED" and verification.get("passed"):
+        status_badge = "✅ COMPLETED & VERIFIED"
+    elif verification.get("safe_halt"):
+        status_badge = f"🛑 SAFELY HALTED — {status}"
+    else:
+        status_badge = f"⚠️ INCOMPLETE — {status}"
 
     lines = [
         "# 📋 Autonomous Finance Clerk — Execution Audit Report",

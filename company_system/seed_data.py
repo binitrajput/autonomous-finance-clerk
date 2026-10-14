@@ -36,13 +36,24 @@ def seed_database(db_path: str) -> None:
     )
 
     # --- One existing ledger entry (for duplicate detection testing) ---
+    seed_invoice_number = 'INV-2024-0035'
     cursor.execute(
-        """INSERT OR IGNORE INTO ledger (invoice_number, vendor_id, po_number, amount, currency, due_date, status, notes)
-           VALUES ('INV-2024-0035', 2, 'PO-2024-002', 3200.00, 'USD', '2024-11-15', 'paid', 'Cloud services - September')"""
+        """INSERT INTO ledger (invoice_number, vendor_id, po_number, amount, currency, due_date, status, notes)
+           SELECT ?, 2, 'PO-2024-002', 3200.00, 'USD', '2024-11-15', 'paid', 'Cloud services - September'
+           WHERE NOT EXISTS (
+               SELECT 1 FROM ledger WHERE UPPER(invoice_number) = UPPER(?)
+           )""",
+        (seed_invoice_number, seed_invoice_number)
     )
     cursor.execute(
+        "SELECT id FROM ledger WHERE UPPER(invoice_number) = UPPER(?) ORDER BY id LIMIT 1",
+        (seed_invoice_number,)
+    )
+    seed_ledger_entry_id = cursor.fetchone()[0]
+    cursor.execute(
         """INSERT OR IGNORE INTO processed_invoices (invoice_number, vendor_id, file_path, ledger_entry_id)
-           VALUES ('INV-2024-0035', 2, 'invoices/globex_INV-2024-0035.json', 1)"""
+           VALUES (?, 2, 'invoices/globex_INV-2024-0035.json', ?)""",
+        (seed_invoice_number, seed_ledger_entry_id)
     )
 
     conn.commit()
