@@ -73,6 +73,7 @@ class OutcomeVerifier:
         aborted = next((s for s in reversed(memory.steps) if (
             (s.tool == "check_duplicate" and s.result.get("is_duplicate"))
             or (s.tool == "read_invoice" and s.result.get("is_malformed"))
+            or (s.tool == "read_invoice" and s.result.get("blocked"))
             or (s.tool == "request_user_approval" and not s.result.get("approved"))
         )), None)
         if aborted:

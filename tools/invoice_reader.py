@@ -1,8 +1,9 @@
 """Invoice reader tool to extract and validate invoice details from files."""
 
-import os
 import json
+from pathlib import Path
 from typing import Dict, Any
+import config
 
 
 def read_invoice(file_path: str) -> Dict[str, Any]:
@@ -14,12 +15,47 @@ def read_invoice(file_path: str) -> Dict[str, Any]:
     Returns:
         Dict containing parsed invoice fields or error details if malformed.
     """
-    if not os.path.exists(file_path):
+    invoice_root = Path(config.INVOICE_DIR).resolve()
+    requested_path = Path(file_path)
+    try:
+        candidate = requested_path if requested_path.is_absolute() else invoice_root / requested_path
+        try:
+            resolved_path = candidate.resolve(strict=True)
+        except FileNotFoundError:
+            # Also accept project-root-relative paths such as invoices/example.json.
+            if requested_path.is_absolute():
+                raise
+            resolved_path = (Path.cwd() / requested_path).resolve(strict=True)
+        resolved_path.relative_to(invoice_root)
+    except ValueError:
         return {
             "success": False,
-            "error": f"Invoice file not found: {file_path}",
+            "blocked": True,
+            "error": "Invoice path must point to a file inside the configured invoice directory.",
             "is_malformed": False
         }
+    except FileNotFoundError:
+        return {
+            "success": False,
+            "error": "Invoice file not found in the configured invoice directory.",
+            "is_malformed": False
+        }
+    except OSError:
+        return {
+            "success": False,
+            "blocked": True,
+            "error": "Invoice path could not be safely resolved.",
+            "is_malformed": False
+        }
+
+    if not resolved_path.is_file() or resolved_path.suffix.lower() != ".json":
+        return {
+            "success": False,
+            "blocked": True,
+            "error": "Only JSON invoice files inside the configured invoice directory can be read.",
+            "is_malformed": False
+        }
+    file_path = str(resolved_path)
 
     try:
         with open(file_path, "r") as f:

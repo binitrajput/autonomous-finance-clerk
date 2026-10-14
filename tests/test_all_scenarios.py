@@ -21,6 +21,7 @@ from agent.memory import WorkingMemory
 from agent.verifier import OutcomeVerifier
 from tools.approval import set_approval_callback
 from tools.database import get_db_connection
+from tools.invoice_reader import read_invoice
 
 
 def test_1_happy_path_with_approval():
@@ -257,3 +258,12 @@ def test_12_run_reports_when_llm_made_the_decisions(monkeypatch):
         "llm_decisions": 2,
         "fallback_decisions": 0
     }
+
+
+def test_13_invoice_reader_blocks_paths_outside_invoice_directory():
+    """The invoice tool cannot read a file by traversing outside its data folder."""
+    result = read_invoice("../.env")
+
+    assert result["success"] is False
+    assert result["blocked"] is True
+    assert "GROQ_API_KEY" not in str(result)

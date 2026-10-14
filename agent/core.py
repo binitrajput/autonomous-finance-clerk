@@ -142,12 +142,17 @@ class AutonomousAgent:
                     status = "MALFORMED_BLOCKED"
                     break
 
+                if tool_name == "read_invoice" and tool_result.get("blocked"):
+                    final_text = f"Halted: Invoice file access was blocked ({tool_result.get('error')}). No ledger entry created."
+                    status = "ACCESS_BLOCKED"
+                    break
+
                 if tool_name == "request_user_approval" and not tool_result.get("approved"):
                     final_text = f"Halted: User denied approval for invoice processing."
                     status = "APPROVAL_REJECTED"
                     break
 
-            if status in ["DUPLICATE_BLOCKED", "MALFORMED_BLOCKED", "APPROVAL_REJECTED"]:
+            if status in ["DUPLICATE_BLOCKED", "MALFORMED_BLOCKED", "ACCESS_BLOCKED", "APPROVAL_REJECTED"]:
                 break
 
         if not finished and status == "COMPLETED":
@@ -338,6 +343,8 @@ class AutonomousAgent:
 
         read_step = next(s for s in steps if s.tool == "read_invoice")
         inv_data = read_step.result
+        if inv_data.get("blocked"):
+            return {"content": f"Invoice file access was blocked: {inv_data.get('error')} No action taken."}
         if inv_data.get("is_malformed"):
             return {"content": f"Invoice is malformed: {inv_data.get('error')}"}
 
